@@ -24,16 +24,20 @@ static struct cdev *fib_cdev;
 static struct class *fib_class;
 static DEFINE_MUTEX(fib_mutex);
 
-static long long fib_sequence(long long k)
+static long long fib_sequence(uint64_t target)
 {
-    long long f[2] = {0, 1};
+    if (target <= 2)
+        return !!target;
 
-    for (int i = 1; i <= k; i++) {
-        swap(f[0], f[1]);
-        f[0] += f[1];
-    }
+    //   fib(2n) = fib(n) * (2 * fib(n+1) − fib(n))
+    // fib(2n+1) = fib(n) * fib(n) + fib(n+1) * fib(n+1)
+    uint64_t n = fib_sequence(target >> 1);
+    uint64_t n1 = fib_sequence((target >> 1) + 1);
 
-    return f[0];
+    // check 2n or 2n+1
+    if (target & 1)
+        return n * n + n1 * n1;
+    return n * ((n1 << 1) - n);
 }
 
 static int fib_open(struct inode *inode, struct file *file)
