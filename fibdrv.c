@@ -29,15 +29,19 @@ static long long fib_sequence(uint64_t target)
     if (target <= 2)
         return !!target;
 
-    //   fib(2n) = fib(n) * (2 * fib(n+1) − fib(n))
-    // fib(2n+1) = fib(n) * fib(n) + fib(n+1) * fib(n+1)
-    uint64_t n = fib_sequence(target >> 1);
-    uint64_t n1 = fib_sequence((target >> 1) + 1);
+    // find first 1
+    uint8_t count = 63 - __builtin_clzll(target);
+    uint64_t fib_n0 = 1, fib_n1 = 1;
 
-    // check 2n or 2n+1
-    if (target & 1)
-        return n * n + n1 * n1;
-    return n * ((n1 << 1) - n);
+    for (uint64_t i = count, fib_2n0, fib_2n1, mask; i-- > 0;) {
+        fib_2n0 = fib_n0 * ((fib_n1 << 1) - fib_n0);
+        fib_2n1 = fib_n0 * fib_n0 + fib_n1 * fib_n1;
+
+        mask = -!!(target & (1UL << i));
+        fib_n0 = (fib_2n0 & ~mask) + (fib_2n1 & mask);
+        fib_n1 = (fib_2n0 & mask) + fib_2n1;
+    }
+    return fib_n0;
 }
 
 static int fib_open(struct inode *inode, struct file *file)
