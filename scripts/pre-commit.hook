@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
 CPPCHECK_suppresses="--suppress=missingIncludeSystem"
-CPPCHECK_OPTS="-I. --enable=all --error-exitcode=1 --force $CPPCHECK_suppresses ."
+CPPCHECK_EXCLUDES="--config-exclude=test"
+CPPCHECK_OPTS="-I. --enable=all --error-exitcode=1 $CPPCHECK_EXCLUDES --force $CPPCHECK_suppresses ."
 
 RETURN=0
 CLANG_FORMAT=$(which clang-format)
