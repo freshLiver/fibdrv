@@ -4,8 +4,12 @@
 #include <linux/init.h>
 #include <linux/kdev_t.h>
 #include <linux/kernel.h>
+#include <linux/mm.h>
 #include <linux/module.h>
-#include <linux/mutex.h>
+#include <linux/slab.h>
+#include <linux/vmalloc.h>
+
+#include "bignum.h"
 
 MODULE_LICENSE("Dual MIT/GPL");
 MODULE_AUTHOR("National Cheng Kung University, Taiwan");
@@ -17,7 +21,7 @@ MODULE_VERSION("0.1");
 /* MAX_LENGTH is set to 92 because
  * ssize_t can't fit the number > 92
  */
-#define MAX_LENGTH 92
+#define MAX_LENGTH 100
 
 static dev_t fib_dev = 0;
 static struct cdev *fib_cdev;
@@ -44,6 +48,23 @@ static long long fib_sequence(uint64_t target)
     return fib_n0;
 }
 
+static long long fib_sequence_big(uint64_t target, char *buf, size_t size)
+{
+    struct list_head *lgr = bignum_new(1), *slr = bignum_new(0);
+
+    for (uint64_t i = 0; i < target; ++i) {
+        bignum_add_to_smaller(lgr, slr);
+        swap(lgr, slr);
+    }
+
+    char *result = bignum_to_string(slr);
+    size_t failed = copy_to_user(buf, result, size);
+    vfree(result);
+    bignum_free(lgr);
+    bignum_free(slr);
+    return size - failed;
+}
+
 static int fib_open(struct inode *inode, struct file *file)
 {
     if (!mutex_trylock(&fib_mutex)) {
@@ -65,7 +86,16 @@ static ssize_t fib_read(struct file *file,
                         size_t size,
                         loff_t *offset)
 {
-    return (ssize_t) fib_sequence(*offset);
+    if (*offset > 92)
+        return (ssize_t) fib_sequence_big(*offset, buf, size);
+    else {
+        long long res = fib_sequence(*offset);
+        char *tmp = vmalloc(20);
+        snprintf(tmp, 20, "%lld", res);
+        copy_to_user(buf, tmp, min(size, 20));
+        vfree(tmp);
+        return res;
+    }
 }
 
 /* write operation is skipped */
