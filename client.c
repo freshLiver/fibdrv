@@ -11,7 +11,6 @@ int main()
 {
     long long sz;
 
-    char buf[1];
     char write_buf[] = "testing writing";
     int offset = 100; /* TODO: try test something bigger than the limit */
 
@@ -26,24 +25,24 @@ int main()
         printf("Writing to " FIB_DEV ", returned the sequence %lld\n", sz);
     }
 
+    size_t length_pred = offset / 4 + 1;  // fib(n) length ~ 0.2090n
+    char *result = calloc(length_pred, 1);
+
     for (int i = 0; i <= offset; i++) {
         lseek(fd, i, SEEK_SET);
-        sz = read(fd, buf, 1);
-        printf("Reading from " FIB_DEV
-               " at offset %d, returned the sequence "
-               "%lld.\n",
-               i, sz);
+        sz = read(fd, result, length_pred);
+        printf("Reading from %s at offset %d, returned the sequence %s.\n",
+               FIB_DEV, i, result);
     }
 
     for (int i = offset; i >= 0; i--) {
         lseek(fd, i, SEEK_SET);
-        sz = read(fd, buf, 1);
-        printf("Reading from " FIB_DEV
-               " at offset %d, returned the sequence "
-               "%lld.\n",
-               i, sz);
+        sz = read(fd, result, length_pred);
+        printf("Reading from %s at offset %d, returned the sequence %s.\n",
+               FIB_DEV, i, result);
     }
 
+    free(result);
     close(fd);
     return 0;
 }
