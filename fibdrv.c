@@ -28,24 +28,32 @@ static struct cdev *fib_cdev;
 static struct class *fib_class;
 static DEFINE_MUTEX(fib_mutex);
 
-static long long fib_sequence(uint64_t target)
+static long long fib_sequence(uint64_t target, char *buf, size_t size)
 {
+    unsigned long long result;
     if (target <= 2)
-        return !!target;
+        result = !!target;
+    else {
+        // find first 1
+        uint8_t count = 63 - __builtin_clzll(target);
+        uint64_t fib_n0 = 1, fib_n1 = 1;
 
-    // find first 1
-    uint8_t count = 63 - __builtin_clzll(target);
-    uint64_t fib_n0 = 1, fib_n1 = 1;
+        for (uint64_t i = count, fib_2n0, fib_2n1, mask; i-- > 0;) {
+            fib_2n0 = fib_n0 * ((fib_n1 << 1) - fib_n0);
+            fib_2n1 = fib_n0 * fib_n0 + fib_n1 * fib_n1;
 
-    for (uint64_t i = count, fib_2n0, fib_2n1, mask; i-- > 0;) {
-        fib_2n0 = fib_n0 * ((fib_n1 << 1) - fib_n0);
-        fib_2n1 = fib_n0 * fib_n0 + fib_n1 * fib_n1;
-
-        mask = -!!(target & (1UL << i));
-        fib_n0 = (fib_2n0 & ~mask) + (fib_2n1 & mask);
-        fib_n1 = (fib_2n0 & mask) + fib_2n1;
+            mask = -!!(target & (1UL << i));
+            fib_n0 = (fib_2n0 & ~mask) + (fib_2n1 & mask);
+            fib_n1 = (fib_2n0 & mask) + fib_2n1;
+        }
+        result = fib_n0;
     }
-    return fib_n0;
+
+    char *tmp = vmalloc(20);
+    snprintf(tmp, 20, "%llu", result);
+    size_t failed = copy_to_user(buf, tmp, min(size, (size_t) 20));
+    vfree(tmp);
+    return failed;
 }
 
 static long long fib_sequence_big(uint64_t target, char *buf, size_t size)
@@ -62,7 +70,7 @@ static long long fib_sequence_big(uint64_t target, char *buf, size_t size)
     vfree(result);
     bignum_free(lgr);
     bignum_free(slr);
-    return size - failed;
+    return failed;
 }
 
 static int fib_open(struct inode *inode, struct file *file)
@@ -88,14 +96,8 @@ static ssize_t fib_read(struct file *file,
 {
     if (*offset > 92)
         return (ssize_t) fib_sequence_big(*offset, buf, size);
-    else {
-        long long res = fib_sequence(*offset);
-        char *tmp = vmalloc(20);
-        snprintf(tmp, 20, "%lld", res);
-        copy_to_user(buf, tmp, min(size, 20));
-        vfree(tmp);
-        return res;
-    }
+    else
+        return (ssize_t) fib_sequence(*offset, buf, size);
 }
 
 /* write operation is skipped */
