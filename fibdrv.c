@@ -18,22 +18,47 @@ MODULE_VERSION("0.1");
 
 #define DEV_FIBONACCI_NAME "fibonacci"
 
+#define ULL_TO_USER_BUF(val, buf, size)                                 \
+    ({                                                                  \
+        char *tmp = vmalloc(21);                                        \
+        snprintf(tmp, 21, "%llu", val);                                 \
+        size_t failed = copy_to_user(buf, tmp, min(size, (size_t) 21)); \
+        vfree(tmp);                                                     \
+        failed;                                                         \
+    })
+
 /* MAX_LENGTH is set to 92 because
  * ssize_t can't fit the number > 92
  */
 #define MAX_LENGTH 100
+
+static enum FIB_MODES {
+    FIB_MODE_BASIC_64 = 0,
+    FIB_MODE_BASIC_BIG = 1,
+    FIB_MODE_FAST_DOUBLING_64 = 2,
+    FIB_MODE_FAST_DOUBLING_BIG = -1,
+} mode = FIB_MODE_BASIC_64;
 
 static dev_t fib_dev = 0;
 static struct cdev *fib_cdev;
 static struct class *fib_class;
 static DEFINE_MUTEX(fib_mutex);
 
-static long long fib_sequence(uint64_t target, char *buf, size_t size)
+static long long fib_basic_64(uint64_t target, char *buf, size_t size)
 {
-    unsigned long long result;
-    if (target <= 2)
-        result = !!target;
-    else {
+    unsigned long long fib[2] = {0, 1};
+
+    for (int i = 1; i <= target; i++) {
+        swap(fib[0], fib[1]);
+        fib[0] += fib[1];
+    }
+    return ULL_TO_USER_BUF(fib[0], buf, size);
+}
+
+static long long fib_fast_64(uint64_t target, char *buf, size_t size)
+{
+    unsigned long long result = !!target;
+    if (target > 2) {
         // find first 1
         uint8_t count = 63 - __builtin_clzll(target);
         uint64_t fib_n0 = 1, fib_n1 = 1;
@@ -48,15 +73,10 @@ static long long fib_sequence(uint64_t target, char *buf, size_t size)
         }
         result = fib_n0;
     }
-
-    char *tmp = vmalloc(20);
-    snprintf(tmp, 20, "%llu", result);
-    size_t failed = copy_to_user(buf, tmp, min(size, (size_t) 20));
-    vfree(tmp);
-    return failed;
+    return ULL_TO_USER_BUF(result, buf, size);
 }
 
-static long long fib_sequence_big(uint64_t target, char *buf, size_t size)
+static long long fib_basic_big(uint64_t target, char *buf, size_t size)
 {
     struct list_head *lgr = bignum_new(1), *slr = bignum_new(0);
 
@@ -94,10 +114,23 @@ static ssize_t fib_read(struct file *file,
                         size_t size,
                         loff_t *offset)
 {
-    if (*offset > 92)
-        return (ssize_t) fib_sequence_big(*offset, buf, size);
-    else
-        return (ssize_t) fib_sequence(*offset, buf, size);
+    switch (mode) {
+    case FIB_MODE_BASIC_64:
+        printk(KERN_INFO "MODE = BASIC_64.\n");
+        return (ssize_t) fib_basic_64(*offset, buf, size);
+
+    case FIB_MODE_FAST_DOUBLING_64:
+        printk(KERN_INFO "MODE = FAST_DOUBLING_64.\n");
+        return (ssize_t) fib_fast_64(*offset, buf, size);
+
+    case FIB_MODE_BASIC_BIG:
+        printk(KERN_INFO "MODE = BASIC_BIG.\n");
+        return (ssize_t) fib_basic_big(*offset, buf, size);
+
+    case FIB_MODE_FAST_DOUBLING_BIG:
+    default:
+        return copy_to_user(buf, "TO BE IMPLEMENTED.", size);
+    }
 }
 
 /* write operation is skipped */
@@ -106,6 +139,33 @@ static ssize_t fib_write(struct file *file,
                          size_t size,
                          loff_t *offset)
 {
+    int val, err = kstrtoint_from_user(buf, size, 10U, &val);
+
+    if (err == ERANGE || err == EINVAL)
+        pr_err("OVERFLOW OR NOT A NUMBER STRING.\n");
+    else
+        switch (val) {
+        case FIB_MODE_BASIC_64:
+            pr_info("SET MODE : BASIC_64.\n");
+            mode = FIB_MODE_BASIC_64;
+            return FIB_MODE_BASIC_64;
+
+        case FIB_MODE_FAST_DOUBLING_64:
+            pr_info("SET MODE : FAST_64.\n");
+            mode = FIB_MODE_FAST_DOUBLING_64;
+            return FIB_MODE_FAST_DOUBLING_64;
+
+        case FIB_MODE_BASIC_BIG:
+            pr_info("SET MODE : BASIC_BIG.\n");
+            mode = FIB_MODE_BASIC_BIG;
+            return FIB_MODE_BASIC_BIG;
+
+        case FIB_MODE_FAST_DOUBLING_BIG:
+        default:
+            pr_warn("TO BE IMPLEMENTED.\n");
+            break;
+        }
+
     return 1;
 }
 

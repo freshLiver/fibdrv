@@ -7,12 +7,11 @@
 
 #define FIB_DEV "/dev/fibonacci"
 
-int main()
+int main(int argc, char *argv[])
 {
     long long sz;
-
-    char write_buf[] = "testing writing";
-    int offset = 100; /* TODO: try test something bigger than the limit */
+    char *write_buf = argc > 1 ? argv[1] : "testing writing";
+    int offset = 100;
 
     int fd = open(FIB_DEV, O_RDWR);
     if (fd < 0) {
