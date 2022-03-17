@@ -21,15 +21,13 @@ MODULE_VERSION("0.1");
 #define ULL_TO_USER_BUF(val, buf, size)                                 \
     ({                                                                  \
         char *tmp = vmalloc(21);                                        \
-        snprintf(tmp, 21, "%llu", val);                                 \
+        snprintf(tmp, 21, "%lu", val);                                  \
         size_t failed = copy_to_user(buf, tmp, min(size, (size_t) 21)); \
         vfree(tmp);                                                     \
         failed;                                                         \
     })
 
-/* MAX_LENGTH is set to 92 because
- * ssize_t can't fit the number > 92
- */
+// Set MAX_LENGTH to 92 to prevent uint64 overflow
 #define MAX_LENGTH 100
 
 static enum FIB_MODES {
@@ -44,20 +42,29 @@ static struct cdev *fib_cdev;
 static struct class *fib_class;
 static DEFINE_MUTEX(fib_mutex);
 
-static long long fib_basic_64(uint64_t target, char *buf, size_t size)
+static ssize_t fib_basic_64(uint64_t target, char *buf, size_t size)
 {
-    unsigned long long fib[2] = {0, 1};
-
+    uint64_t ks = ktime_get();  // measure start
+    uint64_t fib[2] = {0, 1};
     for (int i = 1; i <= target; i++) {
         swap(fib[0], fib[1]);
         fib[0] += fib[1];
     }
-    return ULL_TO_USER_BUF(fib[0], buf, size);
+    uint64_t kt = ktime_sub(ktime_get(), ks);  // measure finish
+
+#ifndef CALC_ONLY
+    // copy result to buffer
+    if (ULL_TO_USER_BUF(fib[0], buf, size))
+        pr_warn("%s:%d: Cannot copy all content.\n", __func__, __LINE__);
+#endif
+
+    return (ssize_t) ktime_to_ns(kt);
 }
 
-static long long fib_fast_64(uint64_t target, char *buf, size_t size)
+static ssize_t fib_fast_64(uint64_t target, char *buf, size_t size)
 {
-    unsigned long long result = !!target;
+    uint64_t ks = ktime_get();  // measure start
+    uint64_t result = !!target;
     if (target > 2) {
         // find first 1
         uint8_t count = 63 - __builtin_clzll(target);
@@ -73,24 +80,38 @@ static long long fib_fast_64(uint64_t target, char *buf, size_t size)
         }
         result = fib_n0;
     }
-    return ULL_TO_USER_BUF(result, buf, size);
+    uint64_t kt = ktime_sub(ktime_get(), ks);  // measure finish
+
+#ifndef CALC_ONLY
+    // copy result to buffer
+    if (ULL_TO_USER_BUF(result, buf, size))
+        pr_warn("%s:%d: Cannot copy all content.\n", __func__, __LINE__);
+#endif
+
+    return (ssize_t) ktime_to_ns(kt);
 }
 
-static long long fib_basic_big(uint64_t target, char *buf, size_t size)
+static ssize_t fib_basic_big(uint64_t target, char *buf, size_t size)
 {
+    uint64_t ks = ktime_get();  // measure start
     struct list_head *lgr = bignum_new(1), *slr = bignum_new(0);
-
     for (uint64_t i = 0; i < target; ++i) {
         bignum_add_to_smaller(lgr, slr);
         swap(lgr, slr);
     }
+    uint64_t kt = ktime_sub(ktime_get(), ks);  // measure finish
 
+#ifndef CALC_ONLY
+    // copy result to buffer
     char *result = bignum_to_string(slr);
-    size_t failed = copy_to_user(buf, result, size);
+    if (copy_to_user(buf, result, size))
+        pr_warn("%s:%d: Cannot copy all content.\n", __func__, __LINE__);
     vfree(result);
+#endif
+
     bignum_free(lgr);
     bignum_free(slr);
-    return failed;
+    return (ssize_t) ktime_to_ns(kt);
 }
 
 static int fib_open(struct inode *inode, struct file *file)
@@ -114,23 +135,40 @@ static ssize_t fib_read(struct file *file,
                         size_t size,
                         loff_t *offset)
 {
+    ssize_t (*fib_impl)(uint64_t, char *, size_t);
+
     switch (mode) {
     case FIB_MODE_BASIC_64:
-        printk(KERN_INFO "MODE = BASIC_64.\n");
-        return (ssize_t) fib_basic_64(*offset, buf, size);
+#ifndef CALC_ONLY
+        pr_info("MODE = BASIC_64.\n");
+#endif
+        fib_impl = fib_basic_64;
+        break;
 
     case FIB_MODE_FAST_DOUBLING_64:
-        printk(KERN_INFO "MODE = FAST_DOUBLING_64.\n");
-        return (ssize_t) fib_fast_64(*offset, buf, size);
+#ifndef CALC_ONLY
+        pr_info("MODE = FAST_DOUBLING_64.\n");
+#endif
+        fib_impl = fib_fast_64;
+        break;
 
     case FIB_MODE_BASIC_BIG:
-        printk(KERN_INFO "MODE = BASIC_BIG.\n");
-        return (ssize_t) fib_basic_big(*offset, buf, size);
+#ifndef CALC_ONLY
+        pr_info("MODE = BASIC_BIG.\n");
+#endif
+        fib_impl = fib_basic_big;
+        break;
 
     case FIB_MODE_FAST_DOUBLING_BIG:
     default:
-        return copy_to_user(buf, "TO BE IMPLEMENTED.", size);
+#ifndef CALC_ONLY
+        pr_err("MODE TO BE IMPLEMENTED.\n");
+#endif
+        return 0;
     }
+
+    // calc fib(n)
+    return fib_impl(*offset, buf, size);
 }
 
 /* write operation is skipped */
