@@ -32,13 +32,20 @@ typedef struct {
 typedef struct {
     uint64_t value;
     struct list_head link;
+    struct list_head carries;
 } bignum_node;
 
 
+typedef struct {
+    uint64_t value;
+    struct list_head link;
+} bignum_carry;
+
+
 // 18,446,744,073,709,551,615
-#define MAX_DIGITS 18
-#define BOUND64 1000000000000000000UL
-#define LEADING_FMT "%018"
+#define MAX_DIGITS 9
+#define BOUND64 1000000000UL
+#define LEADING_FMT "%09"
 
 #define NEW_BIGNUM_NODE(head, val)                                    \
     ({                                                                \
@@ -46,6 +53,7 @@ typedef struct {
         if (node) {                                                   \
             node->value = val;                                        \
             INIT_LIST_HEAD(&node->link);                              \
+            INIT_LIST_HEAD(&node->carries);                           \
             list_entry(head, bignum_head, link)->len++;               \
             list_add_tail(&node->link, head);                         \
         }                                                             \
@@ -57,6 +65,36 @@ typedef struct {
         uint64_t overflow = -!!(res >= BOUND64); \
         (b) = res - (BOUND64 & overflow);        \
         overflow;                                \
+    })
+
+
+
+#define NEW_CARRY_NODE(carry_list, val)                                      \
+    ({                                                                       \
+        bignum_carry *new_carry = kmalloc(sizeof(bignum_carry), GFP_KERNEL); \
+        if (new_carry) {                                                     \
+            new_carry->value = val;                                          \
+            INIT_LIST_HEAD(&new_carry->link);                                \
+            list_add_tail(&new_carry->link, carry_list);                     \
+        }                                                                    \
+    })
+
+#define CARRY_HANDLER(head, pnext, carry, remain)                \
+    ({                                                           \
+        typeof(carry) _cry = (carry);                            \
+        typeof(remain) _rem = (remain);                          \
+                                                                 \
+        if (*(pnext) == (head))                                  \
+            NEW_BIGNUM_NODE((head), 0);                          \
+        list_entry(*(pnext), bignum_node, link)->value = _rem;   \
+                                                                 \
+        if (_cry && ((*(pnext))->next == (head)))                \
+            NEW_BIGNUM_NODE((head), 0);                          \
+        if (_cry) {                                              \
+            bignum_node *next =                                  \
+                list_entry((*(pnext))->next, bignum_node, link); \
+            NEW_CARRY_NODE(&next->carries, _cry);                \
+        }                                                        \
     })
 
 
@@ -95,6 +133,44 @@ static inline void bignum_add_to_smaller(struct list_head *lgr,
 
         carry = FULL_ADDER_64(lentry->value, sentry->value, carry);
     }
+}
+
+static inline struct list_head *bignum_multiply(struct list_head *mtr,
+                                                struct list_head *mtd)
+{
+    // multiply each mtd node to each mtr node O(n^2)
+    struct list_head *result = bignum_new(0), **ptr = &result->next;
+
+    for (struct list_head *pmtd = mtd->next; pmtd != mtd; pmtd = pmtd->next) {
+        struct list_head *nxt = (*ptr)->next, *pmtr;
+        list_for_each (pmtr, mtr) {
+            // get node value and calc product and carry
+            uint64_t product = list_entry(pmtr, bignum_node, link)->value *
+                               list_entry(pmtd, bignum_node, link)->value,
+                     carry = product / BOUND64, remain = product % BOUND64;
+            // set remain and carry carry to next node
+            CARRY_HANDLER(result, &nxt->next, carry, remain);
+            nxt = nxt->next;
+        }
+        ptr = &(*ptr)->next;
+    }
+
+    // handle each node's pending carries
+    for (ptr = &result->next; *ptr != result; ptr = &(*ptr)->next) {
+        bignum_node *node = list_entry(*ptr, bignum_node, link);
+        bignum_carry *carry = list_entry(&node->carries, bignum_carry, link),
+                     *safe;
+        list_for_each_entry_safe (carry, safe, &node->carries, link) {
+            // add one carry from pending carry, and carry 1 if needed
+            if (FULL_ADDER_64(carry->value, node->value, 0))
+                CARRY_HANDLER(&node->carries, ptr, 1, 0);
+            // remove carry from pending list
+            list_del(&carry->link);
+            kfree(carry);
+        }
+    }
+
+    return result;
 }
 
 static inline char *bignum_to_string(struct list_head *head)
