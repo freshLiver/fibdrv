@@ -12,6 +12,7 @@
 #define vzalloc(s) calloc(s, 1)
 #define kmalloc(s, gfp) malloc(s)
 #define kfree(p) free(p)
+#define vfree(p) free(p)
 #define printk(...) printf(__VA_ARGS__)
 #define U64_FMT "lu"
 #else
@@ -37,6 +38,18 @@ typedef struct {
 // 18,446,744,073,709,551,615
 #define MAX_DIGITS 18
 #define BOUND64 1000000000000000000UL
+#define LEADING_FMT "%018"
+
+#define NEW_BIGNUM_NODE(head, val)                                    \
+    ({                                                                \
+        bignum_node *node = kmalloc(sizeof(bignum_node), GFP_KERNEL); \
+        if (node) {                                                   \
+            node->value = val;                                        \
+            INIT_LIST_HEAD(&node->link);                              \
+            list_entry(head, bignum_head, link)->len++;               \
+            list_add_tail(&node->link, head);                         \
+        }                                                             \
+    })
 
 #define FULL_ADDER_64(a, b, carry)               \
     ({                                           \
@@ -46,16 +59,16 @@ typedef struct {
         overflow;                                \
     })
 
-#define NEW_NODE(head, val)                                           \
-    ({                                                                \
-        bignum_node *node = kmalloc(sizeof(bignum_node), GFP_KERNEL); \
-        if (node) {                                                   \
-            node->value = val;                                        \
-            list_entry(head, bignum_head, link)->len++;               \
-            list_add_tail(&node->link, head);                         \
-        }                                                             \
-    })
 
+
+static inline struct list_head *bignum_new(uint64_t val)
+{
+    bignum_head *head = kmalloc(sizeof(bignum_head), GFP_KERNEL);
+    INIT_LIST_HEAD(&head->link);
+    NEW_BIGNUM_NODE(&head->link, val);
+    head->len = 1;
+    return &head->link;
+}
 
 static inline void bignum_add_to_smaller(struct list_head *lgr,
                                          struct list_head *slr)
@@ -68,12 +81,12 @@ static inline void bignum_add_to_smaller(struct list_head *lgr,
             // no more node, no carry => terminate
             if (*l == lgr) {
                 if (carry)
-                    NEW_NODE(slr, 1);
+                    NEW_BIGNUM_NODE(slr, 1);
                 break;
             }
 
             // next node exists or carry exists => new node for slr and do add
-            NEW_NODE(slr, 0);
+            NEW_BIGNUM_NODE(slr, 0);
         }
 
         // add two node's value
@@ -84,22 +97,13 @@ static inline void bignum_add_to_smaller(struct list_head *lgr,
     }
 }
 
-static inline struct list_head *bignum_new(uint64_t val)
-{
-    bignum_head *head = kmalloc(sizeof(bignum_head), GFP_KERNEL);
-    INIT_LIST_HEAD(&head->link);
-    NEW_NODE(&head->link, val);
-    head->len = 0;
-    return &head->link;
-}
-
 static inline char *bignum_to_string(struct list_head *head)
 {
     // UINT64 < BOUND64 (10^18)
     size_t digits = list_entry(head, bignum_head, link)->len * MAX_DIGITS + 1;
 
     // DMA for result string
-    char *res = vzalloc(sizeof(char) * digits), *pres = res;
+    char *res = vzalloc(digits);
 
     if (!res)
         return NULL;
@@ -115,13 +119,13 @@ static inline char *bignum_to_string(struct list_head *head)
 
     // Most Significant Node
     node_result = list_entry(p, bignum_node, link)->value;
-    snprintf(pres, MAX_DIGITS + 1, "%" U64_FMT, node_result);
+    snprintf(res, MAX_DIGITS + 1, "%" U64_FMT, node_result);
 
     // other nodes
     for (p = p->prev; p != head; p = p->prev) {
         size_t pos = strlen(res);
         node_result = list_entry(p, bignum_node, link)->value;
-        snprintf(&res[pos], MAX_DIGITS + 1, "%018" U64_FMT, node_result);
+        snprintf(&res[pos], MAX_DIGITS + 1, LEADING_FMT U64_FMT, node_result);
     }
 
     return res;
