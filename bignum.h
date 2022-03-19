@@ -64,7 +64,7 @@ typedef struct {
         uint64_t res = (a) + (b) + (carry);      \
         uint64_t overflow = -!!(res >= BOUND64); \
         (b) = res - (BOUND64 & overflow);        \
-        overflow;                                \
+        -overflow;                               \
     })
 
 
