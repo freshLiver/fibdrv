@@ -67,6 +67,23 @@ typedef struct {
         -overflow;                               \
     })
 
+#define SUBTRACTOR(lhead, lentry, sentry)                                   \
+    ({                                                                      \
+        struct list_head *_lh = lhead;                                      \
+        bignum_node *_le = (lentry), *_se = (sentry);                       \
+        if (_le->link.next != _lh) {                                        \
+            bignum_node *borrowed = list_next_entry(_le, link);             \
+            _le->value += BOUND64;                                          \
+            printk("set borrowed %lu\n", _le->value);                       \
+            _le->value -= _se->value;                                       \
+            borrowed->value -= !!(_le->value < BOUND64);                    \
+            printk("borrowed %lu, res %lu\n", borrowed->value, _le->value); \
+            _le->value -= -!!(_le->value >= BOUND64) & BOUND64;             \
+        } else {                                                            \
+            _le->value -= _se->value;                                       \
+            printk("No borrow, res %lu\n", _le->value);                     \
+        }                                                                   \
+    })
 
 
 #define NEW_CARRY_NODE(carry_list, val)                                      \
@@ -98,7 +115,21 @@ typedef struct {
     })
 
 
+/* Function Declarations */
+static inline struct list_head *bignum_new(uint64_t val);
+static inline void bignum_add_to_smaller(struct list_head *lgr,
+                                         struct list_head *slr);
+static inline void bignum_sub_from_larger(struct list_head *lgr,
+                                          struct list_head *slr);
 
+static inline struct list_head *bignum_multiply(struct list_head *mtr,
+                                                struct list_head *mtd);
+static inline char *bignum_to_string(struct list_head *head);
+static inline void bignum_free(struct list_head *head);
+
+
+
+/* Function Implementations */
 static inline struct list_head *bignum_new(uint64_t val)
 {
     bignum_head *head = kmalloc(sizeof(bignum_head), GFP_KERNEL);
@@ -132,6 +163,36 @@ static inline void bignum_add_to_smaller(struct list_head *lgr,
                     *sentry = list_entry(*s, bignum_node, link);
 
         carry = FULL_ADDER_64(lentry->value, sentry->value, carry);
+    }
+}
+
+static inline void bignum_sub_from_larger(struct list_head *lgr,
+                                          struct list_head *slr)
+{
+    for (struct list_head *l = lgr->next, *s = slr->next; s != slr;) {
+        // subtract slr from lgr
+        bignum_node *lentry = list_entry(l, bignum_node, link),
+                    *sentry = list_entry(s, bignum_node, link);
+        SUBTRACTOR(lgr, lentry, sentry);
+
+        // move to next node
+        l = l->next;
+        s = s->next;
+    }
+
+    // remove leading zeros
+    bignum_node *ptr = list_entry(lgr->next, bignum_node, link), *safe;
+    list_for_each_entry_safe_reverse(ptr, safe, lgr, link)
+    {
+        if (ptr->value)
+            break;
+
+        // delete redundant 0 node
+        list_del(&ptr->link);
+        vfree(ptr);
+
+        // dont forget change length
+        list_entry(lgr, bignum_head, link)->len--;
     }
 }
 
