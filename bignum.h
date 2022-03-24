@@ -96,22 +96,22 @@ typedef struct {
         }                                                                    \
     })
 
-#define CARRY_HANDLER(head, pnext, carry, remain)                \
-    ({                                                           \
-        typeof(carry) _cry = (carry);                            \
-        typeof(remain) _rem = (remain);                          \
-                                                                 \
-        if (*(pnext) == (head))                                  \
-            NEW_BIGNUM_NODE((head), 0);                          \
-        list_entry(*(pnext), bignum_node, link)->value = _rem;   \
-                                                                 \
-        if (_cry && ((*(pnext))->next == (head)))                \
-            NEW_BIGNUM_NODE((head), 0);                          \
-        if (_cry) {                                              \
-            bignum_node *next =                                  \
-                list_entry((*(pnext))->next, bignum_node, link); \
-            NEW_CARRY_NODE(&next->carries, _cry);                \
-        }                                                        \
+#define CARRY_HANDLER(head, rem_node, carry, remain)               \
+    ({                                                             \
+        uint64_t _cry = (carry), _rem = (remain);                  \
+        struct list_head **_cry_node = (rem_node);                 \
+                                                                   \
+        if (*_cry_node == (head))                                  \
+            NEW_BIGNUM_NODE((head), 0);                            \
+        list_entry(*_cry_node, bignum_node, link)->value = _rem;   \
+                                                                   \
+        if (_cry && ((*_cry_node)->next == (head)))                \
+            NEW_BIGNUM_NODE((head), 0);                            \
+        if (_cry) {                                                \
+            bignum_node *next =                                    \
+                list_entry((*_cry_node)->next, bignum_node, link); \
+            NEW_CARRY_NODE(&next->carries, _cry);                  \
+        }                                                          \
     })
 
 
@@ -203,15 +203,15 @@ static inline struct list_head *bignum_multiply(struct list_head *mtr,
     struct list_head *result = bignum_new(0), **ptr = &result->next;
 
     for (struct list_head *pmtd = mtd->next; pmtd != mtd; pmtd = pmtd->next) {
-        struct list_head *nxt = (*ptr)->next, *pmtr;
+        struct list_head **rem_node = ptr, *pmtr;
         list_for_each (pmtr, mtr) {
             // get node value and calc product and carry
             uint64_t product = list_entry(pmtr, bignum_node, link)->value *
                                list_entry(pmtd, bignum_node, link)->value,
                      carry = product / BOUND64, remain = product % BOUND64;
             // set remain and carry carry to next node
-            CARRY_HANDLER(result, &nxt->next, carry, remain);
-            nxt = nxt->next;
+            CARRY_HANDLER(result, rem_node, carry, remain);
+            rem_node = &(*rem_node)->next;
         }
         ptr = &(*ptr)->next;
     }
@@ -224,7 +224,7 @@ static inline struct list_head *bignum_multiply(struct list_head *mtr,
         list_for_each_entry_safe (carry, safe, &node->carries, link) {
             // add one carry from pending carry, and carry 1 if needed
             if (FULL_ADDER_64(carry->value, node->value, 0))
-                CARRY_HANDLER(&node->carries, ptr, 1, 0);
+                CARRY_HANDLER(&node->carries, ptr, 1, node->value);
             // remove carry from pending list
             list_del(&carry->link);
             kfree(carry);
