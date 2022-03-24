@@ -93,22 +93,26 @@ typedef struct {
         }                                                                    \
     })
 
-#define CARRY_HANDLER(head, rem_node, carry, remain)               \
-    ({                                                             \
-        uint64_t _cry = (carry), _rem = (remain);                  \
-        struct list_head **_cry_node = (rem_node);                 \
-                                                                   \
-        if (*_cry_node == (head))                                  \
-            NEW_BIGNUM_NODE((head), 0);                            \
-        list_entry(*_cry_node, bignum_node, link)->value = _rem;   \
-                                                                   \
-        if (_cry && ((*_cry_node)->next == (head)))                \
-            NEW_BIGNUM_NODE((head), 0);                            \
-        if (_cry) {                                                \
-            bignum_node *next =                                    \
-                list_entry((*_cry_node)->next, bignum_node, link); \
-            NEW_CARRY_NODE(&next->carries, _cry);                  \
-        }                                                          \
+#define CARRY_HANDLER(head, rem_node, carry, remain)                        \
+    ({                                                                      \
+        uint64_t _cry = (carry), _rem = (remain);                           \
+        struct list_head **_rem_link = (rem_node);                          \
+                                                                            \
+        if (*_rem_link == (head))                                           \
+            NEW_BIGNUM_NODE((head), 0);                                     \
+                                                                            \
+        bignum_node *_rem_node = list_entry(*_rem_link, bignum_node, link); \
+        if (_rem_node->value && _rem)                                       \
+            NEW_CARRY_NODE(&_rem_node->carries, _rem);                      \
+        else if (_rem)                                                      \
+            _rem_node->value = _rem;                                        \
+                                                                            \
+        if (_cry && ((*_rem_link)->next == (head)))                         \
+            NEW_BIGNUM_NODE((head), 0);                                     \
+        if (_cry) {                                                         \
+            bignum_node *next = list_next_entry(_rem_node, link);           \
+            NEW_CARRY_NODE(&next->carries, _cry);                           \
+        }                                                                   \
     })
 
 
@@ -222,7 +226,7 @@ static inline struct list_head *bignum_multiply(struct list_head *mtr,
         list_for_each_entry_safe (carry, safe, &node->carries, link) {
             // add one carry from pending carry, and carry 1 if needed
             if (FULL_ADDER_64(carry->value, node->value, 0))
-                CARRY_HANDLER(&node->carries, ptr, 1, node->value);
+                CARRY_HANDLER(result, ptr, 1, 0);
             // remove carry from pending list
             list_del(&carry->link);
             kfree(carry);
@@ -244,6 +248,7 @@ static inline void bignum_mul_const(struct list_head *mtr, uint64_t mtd)
         bignum_node *node = list_entry(*p, bignum_node, link);
         uint64_t product = node->value * mtd, carry = product / BOUND64,
                  remain = product % BOUND64;
+        node->value = 0;  // node value should be reset
         CARRY_HANDLER(mtr, p, carry, remain);
 
         // handling pendding carries
@@ -251,7 +256,7 @@ static inline void bignum_mul_const(struct list_head *mtr, uint64_t mtd)
                      *next;
         list_for_each_entry_safe (cry, next, &node->carries, link) {
             if (FULL_ADDER_64(cry->value, node->value, 0))
-                CARRY_HANDLER(mtr, &node->link.next, 1, node->value);
+                CARRY_HANDLER(mtr, &node->link.next, 1, 0);
             list_del(&cry->link);
             kfree(cry);
         }
