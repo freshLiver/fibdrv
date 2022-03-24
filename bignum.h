@@ -124,6 +124,7 @@ static inline void bignum_sub_from_larger(struct list_head *lgr,
 
 static inline struct list_head *bignum_multiply(struct list_head *mtr,
                                                 struct list_head *mtd);
+static inline void bignum_mul_const(struct list_head *mtr, uint64_t mtd);
 static inline char *bignum_to_string(struct list_head *head);
 static inline void bignum_free(struct list_head *head);
 
@@ -232,6 +233,32 @@ static inline struct list_head *bignum_multiply(struct list_head *mtr,
     }
 
     return result;
+}
+
+static inline void bignum_mul_const(struct list_head *mtr, uint64_t mtd)
+{
+    if (mtd >= BOUND64) {
+        printk("Constant multiplicand too large!\n");
+        return;
+    }
+
+    for (struct list_head **p = &mtr->next; *p != mtr; p = &(*p)->next) {
+        // do multiplication
+        bignum_node *node = list_entry(*p, bignum_node, link);
+        uint64_t product = node->value * mtd, carry = product / BOUND64,
+                 remain = product % BOUND64;
+        CARRY_HANDLER(mtr, p, carry, remain);
+
+        // handling pendding carries
+        bignum_carry *cry = list_entry(node->carries.next, bignum_carry, link),
+                     *next;
+        list_for_each_entry_safe (cry, next, &node->carries, link) {
+            if (FULL_ADDER_64(cry->value, node->value, 0))
+                CARRY_HANDLER(mtr, &node->link.next, 1, node->value);
+            list_del(&cry->link);
+            kfree(cry);
+        }
+    }
 }
 
 static inline char *bignum_to_string(struct list_head *head)
