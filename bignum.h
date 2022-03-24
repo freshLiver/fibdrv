@@ -115,6 +115,28 @@ typedef struct {
         }                                                                   \
     })
 
+#define PRINT(fmt, ...) printk(fmt "\n", ##__VA_ARGS__)
+#define PRINT_BIGNUM(num, fmt, ...)                            \
+    ({                                                         \
+        char *_res = bignum_to_string(num);                    \
+        printk("%s = %s" fmt "\n", #num, _res, ##__VA_ARGS__); \
+        free(_res);                                            \
+    })
+
+#define PRINT_NODES(num)                                      \
+    ({                                                        \
+        printk("%d:%s (%s)\n", __LINE__, __FUNCTION__, #num); \
+        bignum_node *node;                                    \
+        list_for_each_entry (node, num, link) {               \
+            bignum_carry *carry;                              \
+            printk("%lu [", node->value);                     \
+            list_for_each_entry (carry, &node->carries, link) \
+                printk(" + %lu", carry->value);               \
+            printk("]\n");                                    \
+        }                                                     \
+        printk("\n");                                         \
+    })
+
 
 /* Function Declarations */
 static inline struct list_head *bignum_new(uint64_t val);
@@ -135,9 +157,11 @@ static inline void bignum_free(struct list_head *head);
 static inline struct list_head *bignum_new(uint64_t val)
 {
     bignum_head *head = kmalloc(sizeof(bignum_head), GFP_KERNEL);
+    head->len = 0;  // must before NEW_BIGNUM_NODE
     INIT_LIST_HEAD(&head->link);
-    NEW_BIGNUM_NODE(&head->link, val);
-    head->len = 1;
+    NEW_BIGNUM_NODE(&head->link, val % BOUND64);
+    if (val >= BOUND64)
+        NEW_BIGNUM_NODE(&head->link, val / BOUND64);
     return &head->link;
 }
 
