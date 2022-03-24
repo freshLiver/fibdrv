@@ -67,22 +67,19 @@ typedef struct {
         -overflow;                               \
     })
 
-#define SUBTRACTOR(lhead, lentry, sentry)                                   \
-    ({                                                                      \
-        struct list_head *_lh = lhead;                                      \
-        bignum_node *_le = (lentry), *_se = (sentry);                       \
-        if (_le->link.next != _lh) {                                        \
-            bignum_node *borrowed = list_next_entry(_le, link);             \
-            _le->value += BOUND64;                                          \
-            printk("set borrowed %lu\n", _le->value);                       \
-            _le->value -= _se->value;                                       \
-            borrowed->value -= !!(_le->value < BOUND64);                    \
-            printk("borrowed %lu, res %lu\n", borrowed->value, _le->value); \
-            _le->value -= -!!(_le->value >= BOUND64) & BOUND64;             \
-        } else {                                                            \
-            _le->value -= _se->value;                                       \
-            printk("No borrow, res %lu\n", _le->value);                     \
-        }                                                                   \
+#define SUBTRACTOR(lhead, lentry, sentry)                       \
+    ({                                                          \
+        struct list_head *_lh = lhead;                          \
+        bignum_node *_le = (lentry), *_se = (sentry);           \
+        if (_le->link.next != _lh) {                            \
+            bignum_node *borrowed = list_next_entry(_le, link); \
+            _le->value += BOUND64;                              \
+            _le->value -= _se->value;                           \
+            borrowed->value -= !!(_le->value < BOUND64);        \
+            _le->value -= -!!(_le->value >= BOUND64) & BOUND64; \
+        } else {                                                \
+            _le->value -= _se->value;                           \
+        }                                                       \
     })
 
 
